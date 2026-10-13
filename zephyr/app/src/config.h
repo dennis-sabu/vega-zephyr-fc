@@ -15,22 +15,31 @@
 /* ========================================================================== */
 
 #define FLIGHT_THREAD_STACK_SIZE       4096
+#define ALTITUDE_THREAD_STACK_SIZE     2048
 #define RC_THREAD_STACK_SIZE           2048
 #define TELEMETRY_THREAD_STACK_SIZE    2048
 
-#define FLIGHT_THREAD_PRIORITY         1    /* Highest priority real-time loop */
-#define RC_THREAD_PRIORITY             2    /* SBUS reception & channel decoding */
-#define TELEMETRY_THREAD_PRIORITY      5    /* Housekeeping & telemetry downlink */
+/* Thread Priorities (Preemptive) */
+#define FLIGHT_THREAD_PRIORITY         1    /* K_PRIO_PREEMPT(1) - 250 Hz flight loop */
+#define ALTITUDE_THREAD_PRIORITY       2    /* K_PRIO_PREEMPT(2) - 50 Hz altitude loop */
+#define RC_THREAD_PRIORITY             3    /* K_PRIO_PREEMPT(3) - 100 Hz SBUS rx */
+#define TELEMETRY_THREAD_PRIORITY      6    /* K_PRIO_PREEMPT(6) - 10 Hz housekeeping */
 
-/* Flight Loop Execution Frequency */
-#define FLIGHT_LOOP_FREQ_HZ            500
-#define FLIGHT_LOOP_PERIOD_US          (1000000 / FLIGHT_LOOP_FREQ_HZ) /* 2000 us */
-#define FLIGHT_LOOP_DT_S               (1.0f / (float)FLIGHT_LOOP_FREQ_HZ)
+/* Flight Loop Execution Frequency (250 Hz / 4 ms) */
+#define FLIGHT_LOOP_FREQ_HZ            250
+#define FLIGHT_LOOP_PERIOD_US          (1000000 / FLIGHT_LOOP_FREQ_HZ) /* 4000 us */
+#define FLIGHT_LOOP_DT_S               (1.0f / (float)FLIGHT_LOOP_FREQ_HZ) /* 0.004 s */
+
+/* Altitude Control Loop Frequency (50 Hz / 20 ms) */
+#define ALTITUDE_LOOP_FREQ_HZ          50
+#define ALTITUDE_LOOP_PERIOD_MS        (1000 / ALTITUDE_LOOP_FREQ_HZ)  /* 20 ms */
+#define ALTITUDE_LOOP_DT_S             (1.0f / (float)ALTITUDE_LOOP_FREQ_HZ) /* 0.02 s */
 
 /* Background Subsystem Rates */
-#define TELEMETRY_RATE_HZ              20
-#define TELEMETRY_PERIOD_MS            (1000 / TELEMETRY_RATE_HZ)      /* 50 ms */
-#define BATTERY_RATE_HZ                10
+#define RC_THREAD_PERIOD_MS            10   /* 10 ms / 100 Hz */
+#define TELEMETRY_RATE_HZ              10   /* 10 Hz */
+#define TELEMETRY_PERIOD_MS            (1000 / TELEMETRY_RATE_HZ)      /* 100 ms */
+#define BATTERY_RATE_HZ                10   /* 10 Hz */
 #define BATTERY_PERIOD_MS              (1000 / BATTERY_RATE_HZ)        /* 100 ms */
 
 /* ========================================================================== */
@@ -54,20 +63,33 @@
 #define GYRO_SCALE_FACTOR_1000DPS      (0.017453292519943295f / 32.8f)  /* rad/s per LSB */
 #define GYRO_SCALE_FACTOR_DEG          (1.0f / 32.8f)                   /* deg/s per LSB */
 
-/* IMU Calibration Parameters */
-#define IMU_CALIB_SAMPLES              1000
+/* IMU Calibration Parameters (Startup stationary bias) */
+#define IMU_CALIB_SAMPLES              500
 
 /* ========================================================================== */
-/* AHRS (Madgwick Orientation Filter) Parameters                              */
+/* Attitude Filter (Complementary Filter) Parameters                          */
 /* ========================================================================== */
 
-#define MADGWICK_BETA                  0.045f   /* Filter gain for accelerometer fusion */
+#define COMPLEMENTARY_ALPHA            0.980f
+
+/* ========================================================================== */
+/* Barometer (BMP280) & Magnetometer (QMC5883L/HMC5883L) Parameters           */
+/* ========================================================================== */
+
+#define BMP280_POLL_RATE_HZ            50
+#define MAG_POLL_RATE_HZ               50
+#define DEFAULT_MAG_DECLINATION_DEG    0.5f  /* Configurable local magnetic declination */
+
+/* ========================================================================== */
+/* GNSS Receiver (UART0 @ 0x10000100) Parameters                              */
+/* ========================================================================== */
+
+#define GNSS_BAUD_RATE                 9600  /* Standard NMEA baud rate */
 
 /* ========================================================================== */
 /* PWM0 & Motor ESC Output (Quad-X S500 Airframe)                             */
 /* ========================================================================== */
 
-/* THEJAS32 PWM Peripheral Memory Map */
 #define THEJAS32_PWM0_BASE_ADDR        0x10400000
 #define THEJAS32_PWM_GLOBAL_ENABLE_REG 0x80     /* Global enable register offset */
 #define THEJAS32_PWM_ENABLE_BIT        (1 << 0)
@@ -78,48 +100,49 @@
 #define PWM_PERIOD_US                  2500
 
 /* ESC Pulse Width Specifications (Microseconds) */
-#define PWM_PULSE_MIN_US               1000     /* Motors disarmed / zero throttle */
-#define PWM_PULSE_ARMED_IDLE_US        1120     /* Minimum spin when armed (~12%) */
-#define PWM_PULSE_MAX_US               2000     /* 100% full throttle */
+#define PWM_PULSE_DISARMED_US          900      /* Forced when disarmed */
+#define PWM_PULSE_MIN_US               1000     /* 1000 us idle minimum */
+#define PWM_PULSE_ARMED_IDLE_US        1100     /* Minimum spin when armed */
+#define PWM_PULSE_MAX_US               2000     /* 2000 us maximum throttle */
 
 /* Motor Hardware Channel Assignments */
-#define MOTOR_CHANNEL_FR               0        /* Front-Right (CCW) -> Ch 0 */
-#define MOTOR_CHANNEL_RR               1        /* Rear-Right  (CW)  -> Ch 1 */
-#define MOTOR_CHANNEL_RL               2        /* Rear-Left   (CCW) -> Ch 2 */
-#define MOTOR_CHANNEL_FL               3        /* Front-Left  (CW)  -> Ch 3 */
+#define MOTOR_CHANNEL_FR               0        /* Front-Right (CCW) -> Motor 1 -> Ch 0 */
+#define MOTOR_CHANNEL_RR               1        /* Rear-Right  (CW)  -> Motor 2 -> Ch 1 */
+#define MOTOR_CHANNEL_RL               2        /* Rear-Left   (CCW) -> Motor 3 -> Ch 2 */
+#define MOTOR_CHANNEL_FL               3        /* Front-Left  (CW)  -> Motor 4 -> Ch 3 */
 
 /* ========================================================================== */
-/* Cascaded PID Controller Tuning (S500 Multirotor ~2.5 kg AUW)               */
+/* Cascaded Dual-PID Controller Tuning (S500 Multirotor ~2.5 kg AUW)          */
 /* ========================================================================== */
 
-/* Inner Rate Loop (Gyro Angular Rates -> Normalized Torque Demand [-1.0, 1.0]) */
-#define ROLL_RATE_KP                   0.145f
-#define ROLL_RATE_KI                   0.095f
-#define ROLL_RATE_KD                   0.0038f
+/* Inner Rate Loop */
+#define ROLL_RATE_KP                   0.150f
+#define ROLL_RATE_KI                   0.100f
+#define ROLL_RATE_KD                   0.0040f
 
-#define PITCH_RATE_KP                  0.145f
-#define PITCH_RATE_KI                  0.095f
-#define PITCH_RATE_KD                  0.0038f
+#define PITCH_RATE_KP                  0.150f
+#define PITCH_RATE_KI                  0.100f
+#define PITCH_RATE_KD                  0.0040f
 
-#define YAW_RATE_KP                    0.240f
+#define YAW_RATE_KP                    0.250f
 #define YAW_RATE_KI                    0.050f
 #define YAW_RATE_KD                    0.0000f
 
 /* Rate Loop Output and Integrator Clamping */
-#define RATE_INTEGRATOR_MAX            0.25f    /* Max integrator contribution */
-#define RATE_PID_OUTPUT_MAX            0.80f    /* Max angular control demand */
-
-/* Derivative Low-Pass Filter (Cutoff at 30 Hz to attenuate motor vibrations) */
+#define RATE_INTEGRATOR_MAX            0.25f
+#define RATE_PID_OUTPUT_MAX            0.80f
 #define PID_D_TERM_LPF_CUTOFF_HZ       30.0f
 
-/* Outer Angle Loop (Tilt Angle Error -> Target Angular Rate in rad/s) */
+/* Outer Angle Loop */
 #define ROLL_ANGLE_KP                  4.50f
 #define PITCH_ANGLE_KP                 4.50f
 
 /* Flight Envelope Limits */
-#define MAX_ROLL_PITCH_ANGLE_RAD       0.785398f /* 45.0 degrees */
+#define MAX_ROLL_PITCH_ANGLE_DEG       30.0f    /* +/- 30.0 degrees */
+#define MAX_ROLL_PITCH_ANGLE_RAD       0.5235988f
 #define MAX_ROLL_PITCH_RATE_RAD_S      3.490659f /* 200.0 deg/s */
-#define MAX_YAW_RATE_RAD_S             2.617994f /* 150.0 deg/s */
+#define MAX_YAW_RATE_DPS               180.0f   /* +/- 180.0 deg/s */
+#define MAX_YAW_RATE_RAD_S             3.14159265f
 
 /* ========================================================================== */
 /* RC Receiver & SBUS Protocol (UART1 @ 100,000 Baud, 8E2)                    */
@@ -130,23 +153,24 @@
 #define SBUS_END_BYTE_STANDARD         0x00
 #define SBUS_END_BYTE_FUTABA2          0x04
 
-/* Channel Indices (0-indexed) */
-#define SBUS_CH_ROLL                   0        /* Aileron */
-#define SBUS_CH_PITCH                  1        /* Elevator */
-#define SBUS_CH_THROTTLE               2        /* Throttle */
-#define SBUS_CH_YAW                    3        /* Rudder */
-#define SBUS_CH_ARM                    4        /* AUX1: 2-position or 3-position switch */
-#define SBUS_CH_MODE                   5        /* AUX2: Flight mode switch */
+#define SBUS_CH_ROLL                   0
+#define SBUS_CH_PITCH                  1
+#define SBUS_CH_THROTTLE               2
+#define SBUS_CH_YAW                    3
+#define SBUS_CH_ARM                    4        /* AUX1: Arm / Disarm switch */
+#define SBUS_CH_MODE                   5        /* AUX2: Flight Mode 3-pos switch */
 
-/* SBUS Signal Calibration */
 #define SBUS_INPUT_MIN                 172
 #define SBUS_INPUT_CENTER              992
 #define SBUS_INPUT_MAX                 1811
-#define SBUS_STICK_DEADBAND            15       /* Raw counts around center */
-#define SBUS_ARM_THRESHOLD             1400     /* Value above 1400 triggers armed */
-#define SBUS_MODE_ANGLE_THRESHOLD      1400     /* Value above 1400 selects Angle Mode */
+#define SBUS_STICK_DEADBAND            15
+#define SBUS_ARM_THRESHOLD             1400
 
-#define RC_TIMEOUT_MS                  500      /* Failsafe triggered if no frame for 500 ms */
+/* Mode Switch Thresholds (3-position switch on AUX2) */
+#define SBUS_MODE_ANGLE_MIN_THRESH     1300     /* 1300 to 1700 selects Angle Mode */
+#define SBUS_MODE_ALT_HOLD_THRESH      1700     /* > 1700 selects Altitude Hold Mode */
+
+#define RC_TIMEOUT_MS                  500
 
 /* ========================================================================== */
 /* Battery Monitoring & ADC0                                                  */
@@ -154,33 +178,34 @@
 
 #define BATTERY_ADC_CHANNEL            0
 #define ADC_REF_VOLTAGE_V              3.3f
-#define ADC_MAX_VALUE                  4095.0f  /* 12-bit ADC */
-#define BATTERY_VOLTAGE_DIVIDER_RATIO  11.0f    /* (R1 + R2) / R2, e.g. 10k + 1k divider */
-#define BATTERY_EMA_ALPHA              0.08f    /* Exponential moving average filter */
+#define ADC_MAX_VALUE                  4095.0f
 
-/* 4S LiPo Thresholds (14.8V Nominal) */
+#define BATTERY_R1_OHMS                10000.0f
+#define BATTERY_R2_OHMS                2200.0f
+#define BATTERY_VOLTAGE_DIVIDER_RATIO  ((BATTERY_R1_OHMS + BATTERY_R2_OHMS) / BATTERY_R2_OHMS)
+#define BATTERY_EMA_ALPHA              0.10f
+
 #define LIPO_4S_CELLS                  4
 #define LIPO_4S_FULL_V                 16.8f
-#define LIPO_4S_WARN_V                 14.4f    /* 3.6V per cell */
-#define LIPO_4S_CRIT_V                 13.6f    /* 3.4V per cell */
+#define LIPO_4S_WARN_V                 14.4f
+#define LIPO_4S_CRIT_V                 13.2f
 
-/* 3S LiPo Thresholds (11.1V Nominal) */
 #define LIPO_3S_CELLS                  3
 #define LIPO_3S_FULL_V                 12.6f
-#define LIPO_3S_WARN_V                 10.8f    /* 3.6V per cell */
-#define LIPO_3S_CRIT_V                 10.2f    /* 3.4V per cell */
+#define LIPO_3S_WARN_V                 10.8f
+#define LIPO_3S_CRIT_V                 9.9f
 
-/* Auto-detect 3S vs 4S voltage split */
-#define LIPO_CELL_DETECT_THRESHOLD_V   13.2f
+#define LIPO_CELL_DETECT_THRESHOLD_V   13.0f
 
 /* ========================================================================== */
 /* Safety, Failsafe & Arming Checks                                           */
 /* ========================================================================== */
 
-#define ARMING_MAX_TILT_RAD            0.174533f /* 10.0 degrees maximum tilt to arm */
-#define CRASH_TILT_LIMIT_RAD           1.134464f /* 65.0 degrees triggers emergency cut */
-#define FAILSAFE_DESCENT_THROTTLE      0.32f     /* 32% throttle for gentle descent */
-#define FAILSAFE_DESCENT_TIME_MS       5000      /* Descend for 5 seconds then disarm */
-#define BATTERY_CRITICAL_TIMEOUT_MS    3000      /* 3 seconds sustained low voltage */
+#define ARMING_MAX_TILT_RAD            0.174533f /* 10.0 degrees */
+#define CRASH_TILT_LIMIT_DEG           75.0f
+#define CRASH_TILT_LIMIT_RAD           1.3089969f
+#define FAILSAFE_DESCENT_THROTTLE      0.30f
+#define FAILSAFE_DESCENT_TIME_MS       5000
+#define BATTERY_CRITICAL_TIMEOUT_MS    2000
 
 #endif /* CONFIG_H_ */

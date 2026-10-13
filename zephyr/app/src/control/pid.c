@@ -1,9 +1,12 @@
 /*
- * pid.c - Production PID Controller Implementation
+ * pid.c - Discrete PID Controller Implementation
  * Target: C-DAC THEJAS32 SoC (VEGA ET1031 RISC-V @ 100 MHz)
  *
- * Implements anti-windup integration clamping, derivative-on-measurement
- * kick prevention, and first-order low-pass filtering on derivative action.
+ * Implements:
+ * 1. Proportional term: P[k] = Kp * e[k]
+ * 2. Derivative term with 1st-order low-pass filter:
+ *    D[k] = beta * D[k-1] + (1 - beta) * (Kd * (e[k] - e[k-1]) / dt)
+ * 3. Integral term with anti-windup clamping to prevent saturation.
  */
 
 #include "pid.h"
@@ -28,6 +31,7 @@ void pid_init(pid_controller_t *pid, float kp, float ki, float kd,
 	pid->int_max = int_max;
 	pid->integrator = 0.0f;
 	pid->prev_measurement = 0.0f;
+	pid->prev_error = 0.0f;
 	pid->prev_derivative = 0.0f;
 	pid->derivative_on_measurement = deriv_on_measurement;
 
@@ -42,6 +46,7 @@ void pid_reset(pid_controller_t *pid)
 
 	pid->integrator = 0.0f;
 	pid->prev_measurement = 0.0f;
+	pid->prev_error = 0.0f;
 	pid->prev_derivative = 0.0f;
 }
 
@@ -68,7 +73,6 @@ void pid_set_limits(pid_controller_t *pid, float out_min, float out_max,
 	pid->int_min = int_min;
 	pid->int_max = int_max;
 
-	/* Enforce integrator bounds immediately */
 	if (pid->integrator > int_max) {
 		pid->integrator = int_max;
 	} else if (pid->integrator < int_min) {
@@ -83,10 +87,11 @@ void pid_set_d_filter(pid_controller_t *pid, float cutoff_hz, float dt)
 	}
 
 	if (cutoff_hz > 0.0f && dt > 0.0f) {
-		float rc = 1.0f / (TWO_PI * cutoff_hz);
-		pid->d_lpf_alpha = dt / (rc + dt);
+		float tau = 1.0f / (TWO_PI * cutoff_hz);
+		/* Discrete low-pass filter parameter: beta = tau / (tau + dt) */
+		pid->d_beta = tau / (tau + dt);
 	} else {
-		pid->d_lpf_alpha = 1.0f; /* No filtering */
+		pid->d_beta = 0.0f; /* No filtering (1 - beta = 1.0) */
 	}
 }
 
@@ -98,31 +103,28 @@ float pid_update(pid_controller_t *pid, float setpoint, float measurement, float
 
 	float error = setpoint - measurement;
 
-	/* Proportional term */
+	/* 1. Proportional Term */
 	float p_term = pid->kp * error;
 
-	/* Derivative term computation */
+	/* 2. Derivative Term with 1st-Order Low-Pass Filter */
 	float d_raw = 0.0f;
 	if (pid->derivative_on_measurement) {
-		/*
-		 * Derivative-on-measurement prevents "derivative kick" when setpoint
-		 * steps abruptly: d(error)/dt = d(setpoint - measurement)/dt = -d(measurement)/dt
-		 */
-		d_raw = -(measurement - pid->prev_measurement) / dt;
+		/* Derivative-on-measurement prevents setpoint step kick */
+		d_raw = -pid->kd * (measurement - pid->prev_measurement) / dt;
 	} else {
-		d_raw = (error - (setpoint - pid->prev_measurement)) / dt;
+		/* Standard derivative on error */
+		d_raw = pid->kd * (error - pid->prev_error) / dt;
 	}
 
-	/* 1st-order Low-Pass Filter on Derivative: prevents motor vibration amplification */
-	float d_filtered = pid->prev_derivative + pid->d_lpf_alpha * (d_raw - pid->prev_derivative);
-	pid->prev_derivative = d_filtered;
+	/* D[k] = beta * D[k-1] + (1 - beta) * D_raw */
+	float d_term = pid->d_beta * pid->prev_derivative + (1.0f - pid->d_beta) * d_raw;
+	pid->prev_derivative = d_term;
 	pid->prev_measurement = measurement;
-
-	float d_term = pid->kd * d_filtered;
+	pid->prev_error = error;
 
 	/*
-	 * Conditional Integration / Anti-windup:
-	 * Do not accumulate integral if the output is already saturated in the direction of error.
+	 * 3. Integral Term with Anti-Windup Clamping:
+	 * Prevent integration if output is already saturated in error direction.
 	 */
 	float tentative_out = p_term + pid->integrator + d_term;
 	bool saturate_high = (tentative_out >= pid->out_max) && (error > 0.0f);
@@ -137,10 +139,9 @@ float pid_update(pid_controller_t *pid, float setpoint, float measurement, float
 		}
 	}
 
-	/* Compute combined output */
+	/* 4. Combined Clamped Output */
 	float output = p_term + pid->integrator + d_term;
 
-	/* Saturate output to specified boundaries */
 	if (output > pid->out_max) {
 		output = pid->out_max;
 	} else if (output < pid->out_min) {

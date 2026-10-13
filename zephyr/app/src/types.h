@@ -47,8 +47,9 @@ typedef enum {
 } flight_state_t;
 
 typedef enum {
-	MODE_RATE = 0,   /* Acrobatic mode: direct rate gyro PID control */
-	MODE_ANGLE = 1   /* Stabilize mode: outer angle PID + inner rate PID */
+	MODE_RATE     = 0,   /* Acrobatic mode: direct rate gyro PID control */
+	MODE_ANGLE    = 1,   /* Stabilize mode: outer angle PID + inner rate PID */
+	MODE_ALT_HOLD = 2    /* Altitude hold mode: cascaded altitude PID controls collective throttle */
 } flight_mode_t;
 
 typedef enum {
@@ -105,11 +106,24 @@ typedef struct {
 	float yaw_norm;             /* Scaled [-1.0f, +1.0f] */
 	float throttle_norm;        /* Scaled [0.0f, +1.0f] */
 	bool arm_switch;            /* True = Armed requested */
-	flight_mode_t mode_switch;  /* MODE_ANGLE or MODE_RATE */
-	bool frame_lost;            /* SBUS flag */
-	bool failsafe_active;       /* SBUS flag */
+	flight_mode_t mode_switch;  /* MODE_ANGLE, MODE_RATE, or MODE_ALT_HOLD */
+	bool frame_lost;            /* SBUS frame lost flag */
+	bool failsafe_active;       /* SBUS hardware failsafe flag */
 	uint32_t last_packet_time_ms;
 } sbus_channels_t;
+typedef sbus_channels_t rc_channels_t;
+
+/* Thread-safe normalized flight setpoints exchanged via mutex */
+typedef struct {
+	float target_roll_deg;       /* [-30.0, +30.0] in Angle mode */
+	float target_pitch_deg;      /* [-30.0, +30.0] in Angle mode */
+	float target_yaw_rate_dps;   /* [-180.0, +180.0] deg/s */
+	float throttle;              /* [0.0, 1.0] */
+	bool arm_switch;
+	flight_mode_t flight_mode;
+	bool signal_valid;
+	uint32_t timestamp_ms;
+} flight_setpoints_t;
 
 /* -------------------------------------------------------------------------- */
 /* PID Controller Data Structures                                             */
@@ -121,12 +135,13 @@ typedef struct {
 	float kd;
 	float integrator;
 	float prev_measurement;
+	float prev_error;
 	float prev_derivative;
 	float out_min;
 	float out_max;
 	float int_min;
 	float int_max;
-	float d_lpf_alpha;          /* Low pass filter factor for derivative */
+	float d_beta;               /* Filter factor beta in D[k] = beta*D[k-1] + (1-beta)*D_raw */
 	bool derivative_on_measurement;
 } pid_controller_t;
 
@@ -136,7 +151,7 @@ typedef struct {
 
 typedef struct {
 	float norm[4];              /* Normalized demands [0.0f, 1.0f] for Motors 1-4 */
-	uint32_t pulse_us[4];       /* Microsecond pulse widths [1000..2000] */
+	uint32_t pulse_us[4];       /* Microsecond pulse widths [1000..2000] (or 900 if disarmed) */
 } motor_output_t;
 
 /* -------------------------------------------------------------------------- */
@@ -180,6 +195,13 @@ typedef struct __attribute__((packed)) {
 	uint8_t flight_state;
 	uint8_t flight_mode;
 	uint8_t failsafe_reason;
+	float altitude_m;
+	float climb_rate_mps;
+	float mag_heading_deg;
+	double latitude;
+	double longitude;
+	uint8_t gps_sats;
+	uint8_t gps_fix;
 } telemetry_packet_t;
 
 #endif /* TYPES_H_ */

@@ -2,9 +2,14 @@
  * battery.c - LiPo Battery Voltage Monitor and ADC0 Driver Implementation
  * Target: C-DAC THEJAS32 SoC (VEGA ET1031 RISC-V @ 100 MHz)
  * Peripheral: ADC0 @ 0x10001000 (Channel 0)
+ *
+ * Voltage Divider:
+ * R1 = 10 kOhm, R2 = 2.2 kOhm
+ * Divider Ratio = (10k + 2.2k) / 2.2k = 12.2 / 2.2 = 5.545455
  */
 
 #include "battery.h"
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/spinlock.h>
@@ -59,7 +64,8 @@ int battery_init(void)
 		return ret;
 	}
 
-	LOG_INF("ADC0 Channel 0 configured for battery sensing.");
+	LOG_INF("ADC0 Channel 0 configured (Divider: R1=10k, R2=2.2k, Ratio=%.4f).",
+		BATTERY_VOLTAGE_DIVIDER_RATIO);
 
 	/* Acquire 20 baseline samples to establish filtered voltage and cell count */
 	float sum_v = 0.0f;
@@ -67,8 +73,8 @@ int battery_init(void)
 
 	for (int i = 0; i < 20; i++) {
 		if (adc_read(adc_dev, &s_adc_seq) == 0) {
-			float v_inst = ((float)s_adc_sample_buffer / ADC_MAX_VALUE) *
-				       ADC_REF_VOLTAGE_V * BATTERY_VOLTAGE_DIVIDER_RATIO;
+			float v_adc = ((float)s_adc_sample_buffer / ADC_MAX_VALUE) * ADC_REF_VOLTAGE_V;
+			float v_inst = v_adc * BATTERY_VOLTAGE_DIVIDER_RATIO;
 			sum_v += v_inst;
 			valid_reads++;
 		}
@@ -78,11 +84,11 @@ int battery_init(void)
 	if (valid_reads > 0) {
 		s_bat_info.voltage = sum_v / (float)valid_reads;
 	} else {
-		LOG_WRN("ADC initial reads failed, assuming nominal 4S (15.0V)");
+		LOG_WRN("ADC baseline reads failed, assuming nominal 4S pack (15.0V)");
 		s_bat_info.voltage = 15.0f;
 	}
 
-	/* Auto-detect 3S vs 4S pack */
+	/* Auto-detect 3S vs 4S pack based on voltage threshold */
 	if (s_bat_info.voltage > LIPO_CELL_DETECT_THRESHOLD_V) {
 		s_bat_info.cell_count = LIPO_4S_CELLS;
 	} else {
@@ -94,7 +100,7 @@ int battery_init(void)
 	s_bat_info.status = BATTERY_OK;
 	s_is_initialized = true;
 
-	LOG_INF("Battery initialized: Detected %dS LiPo @ %.2f V (%.2f V/cell)",
+	LOG_INF("Battery initialized: %dS LiPo detected @ %.2f V (%.2f V/cell)",
 		s_bat_info.cell_count, s_bat_info.voltage, s_bat_info.cell_voltage);
 
 	return 0;
@@ -112,9 +118,9 @@ int battery_update(void)
 		return ret;
 	}
 
-	/* Instantaneous voltage calculation */
-	float v_inst = ((float)s_adc_sample_buffer / ADC_MAX_VALUE) *
-		       ADC_REF_VOLTAGE_V * BATTERY_VOLTAGE_DIVIDER_RATIO;
+	/* Instantaneous pack voltage calculation */
+	float v_adc = ((float)s_adc_sample_buffer / ADC_MAX_VALUE) * ADC_REF_VOLTAGE_V;
+	float v_inst = v_adc * BATTERY_VOLTAGE_DIVIDER_RATIO;
 
 	k_spinlock_key_t key = k_spin_lock(&s_bat_lock);
 
@@ -124,7 +130,7 @@ int battery_update(void)
 	s_bat_info.cell_voltage = s_bat_info.voltage / (float)s_bat_info.cell_count;
 	s_bat_info.raw_adc = (uint16_t)s_adc_sample_buffer;
 
-	/* Determine health status based on detected cell count */
+	/* Determine health status based on cell count and voltage limits */
 	float warn_thresh = (s_bat_info.cell_count == 4) ? LIPO_4S_WARN_V : LIPO_3S_WARN_V;
 	float crit_thresh = (s_bat_info.cell_count == 4) ? LIPO_4S_CRIT_V : LIPO_3S_CRIT_V;
 
@@ -156,3 +162,12 @@ bool battery_is_critical(void)
 	k_spin_unlock(&s_bat_lock, key);
 	return crit;
 }
+
+float battery_get_voltage(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&s_bat_lock);
+	float v = s_bat_info.voltage;
+	k_spin_unlock(&s_bat_lock, key);
+	return v;
+}
+

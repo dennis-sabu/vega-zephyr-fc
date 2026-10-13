@@ -1,5 +1,5 @@
 /*
- * pid.h - Production Cascaded PID Controller with Anti-Windup and D-Term Filter
+ * pid.h - Discrete PID Controller with Low-Pass Filtered Derivative and Anti-Windup
  * Target: C-DAC THEJAS32 SoC (VEGA ET1031 RISC-V @ 100 MHz)
  * Zephyr RTOS Application
  */
@@ -59,7 +59,8 @@ void pid_set_limits(pid_controller_t *pid, float out_min, float out_max,
 		    float int_min, float int_max);
 
 /**
- * @brief Configure the derivative 1st-order low-pass filter coefficient.
+ * @brief Configure the derivative 1st-order low-pass filter beta coefficient.
+ * beta = tau / (tau + dt), where tau = 1 / (2 * pi * cutoff_hz)
  *
  * @param pid Pointer to PID controller structure.
  * @param cutoff_hz Cutoff frequency in Hz.

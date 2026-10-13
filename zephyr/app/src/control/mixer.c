@@ -12,6 +12,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/sys/sys_io.h>
+#include <errno.h>
 
 LOG_MODULE_REGISTER(mixer, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -22,11 +23,6 @@ static const struct device *const pwm_dev = DEVICE_DT_GET(DT_NODELABEL(pwm0));
 #else
 #error "DeviceTree error: Neither alias 'motor_pwm' nor nodelabel 'pwm0' found."
 #endif
-
-/* Pre-calculated normalized idle throttle */
-static const float s_idle_min_norm =
-	(float)(PWM_PULSE_ARMED_IDLE_US - PWM_PULSE_MIN_US) /
-	(float)(PWM_PULSE_MAX_US - PWM_PULSE_MIN_US);
 
 int mixer_init(void)
 {
@@ -47,10 +43,10 @@ int mixer_init(void)
 		LOG_WRN("PWM Global Enable readback did not confirm bit 0: 0x%08X", reg_val);
 	}
 
-	/* 2. Set all 4 motor ESC channels to safe initial idle (1000 us) */
+	/* 2. Set all 4 motor ESC channels to disarmed state (900 us) */
 	mixer_disarm();
 
-	LOG_INF("Mixer initialized: 4 channels set to 1000 us disarmed pulse.");
+	LOG_INF("Mixer initialized: Channels 0-3 set to 900 us disarmed pulse.");
 	return 0;
 }
 
@@ -61,36 +57,28 @@ void mixer_compute(float throttle, float roll_cmd, float pitch_cmd, float yaw_cm
 		return;
 	}
 
+	/* If disarmed, force all outputs to 900 us */
 	if (!is_armed) {
 		for (int i = 0; i < 4; i++) {
 			output->norm[i] = 0.0f;
-			output->pulse_us[i] = PWM_PULSE_MIN_US;
-		}
-		return;
-	}
-
-	/* If throttle is at absolute bottom while armed, spin at idle */
-	if (throttle < 0.005f) {
-		for (int i = 0; i < 4; i++) {
-			output->norm[i] = s_idle_min_norm;
-			output->pulse_us[i] = PWM_PULSE_ARMED_IDLE_US;
+			output->pulse_us[i] = PWM_PULSE_DISARMED_US;
 		}
 		return;
 	}
 
 	/*
 	 * Quad-X Mixer Equations:
-	 * M1 (FR, CCW) = Throttle - Roll + Pitch + Yaw
-	 * M2 (RR, CW)  = Throttle - Roll - Pitch - Yaw
-	 * M3 (RL, CCW) = Throttle + Roll - Pitch + Yaw
-	 * M4 (FL, CW)  = Throttle + Roll + Pitch - Yaw
+	 * M1 = Throttle - Pitch - Roll - Yaw   (Motor 1, Front-Right, CCW)
+	 * M2 = Throttle + Pitch - Roll + Yaw   (Motor 2, Rear-Right, CW)
+	 * M3 = Throttle + Pitch + Roll - Yaw   (Motor 3, Rear-Left, CCW)
+	 * M4 = Throttle - Pitch + Roll + Yaw   (Motor 4, Front-Left, CW)
 	 */
-	float m1 = throttle - roll_cmd + pitch_cmd + yaw_cmd;
-	float m2 = throttle - roll_cmd - pitch_cmd - yaw_cmd;
-	float m3 = throttle + roll_cmd - pitch_cmd + yaw_cmd;
-	float m4 = throttle + roll_cmd + pitch_cmd - yaw_cmd;
+	float m1 = throttle - pitch_cmd - roll_cmd - yaw_cmd;
+	float m2 = throttle + pitch_cmd - roll_cmd + yaw_cmd;
+	float m3 = throttle + pitch_cmd + roll_cmd - yaw_cmd;
+	float m4 = throttle - pitch_cmd + roll_cmd + yaw_cmd;
 
-	/* Dynamic Desaturation / Attitude Authority Preservation */
+	/* Dynamic Desaturation: Preserve roll/pitch/yaw control authority when motors saturate */
 	float max_m = m1;
 	if (m2 > max_m) max_m = m2;
 	if (m3 > max_m) max_m = m3;
@@ -109,26 +97,35 @@ void mixer_compute(float throttle, float roll_cmd, float pitch_cmd, float yaw_cm
 	if (m3 < min_m) min_m = m3;
 	if (m4 < min_m) min_m = m4;
 
-	if (min_m < s_idle_min_norm) {
-		float deficit = s_idle_min_norm - min_m;
+	if (min_m < 0.0f) {
+		float deficit = -min_m;
 		m1 += deficit;
 		m2 += deficit;
 		m3 += deficit;
 		m4 += deficit;
 	}
 
-	/* Store and clamp outputs */
+	/* Store and constrain outputs strictly between 1000 us (idle) and 2000 us (max) */
 	float motors[4] = {m1, m2, m3, m4};
 	for (int i = 0; i < 4; i++) {
 		if (motors[i] > 1.0f) {
 			motors[i] = 1.0f;
-		} else if (motors[i] < s_idle_min_norm) {
-			motors[i] = s_idle_min_norm;
+		} else if (motors[i] < 0.0f) {
+			motors[i] = 0.0f;
 		}
 
 		output->norm[i] = motors[i];
-		output->pulse_us[i] = PWM_PULSE_MIN_US +
+
+		uint32_t pulse = PWM_PULSE_MIN_US +
 			(uint32_t)(motors[i] * (float)(PWM_PULSE_MAX_US - PWM_PULSE_MIN_US));
+
+		if (pulse > PWM_PULSE_MAX_US) {
+			pulse = PWM_PULSE_MAX_US;
+		} else if (pulse < PWM_PULSE_MIN_US) {
+			pulse = PWM_PULSE_MIN_US;
+		}
+
+		output->pulse_us[i] = pulse;
 	}
 }
 
@@ -153,8 +150,8 @@ int mixer_apply_output(const motor_output_t *output)
 
 void mixer_disarm(void)
 {
-	uint32_t min_pulse_ns = PWM_PULSE_MIN_US * 1000U;
+	uint32_t disarm_pulse_ns = PWM_PULSE_DISARMED_US * 1000U;
 	for (int ch = 0; ch < 4; ch++) {
-		pwm_set(pwm_dev, ch, PWM_PERIOD_NS, min_pulse_ns, 0);
+		pwm_set(pwm_dev, ch, PWM_PERIOD_NS, disarm_pulse_ns, 0);
 	}
 }

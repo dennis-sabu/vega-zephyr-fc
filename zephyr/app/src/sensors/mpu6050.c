@@ -8,6 +8,7 @@
  */
 
 #include "mpu6050.h"
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/i2c.h>
 
@@ -99,8 +100,8 @@ int mpu6050_init(void)
 		return ret;
 	}
 
-	/* 5. Set Sample Rate: 1 kHz / (1 + SMPLRT_DIV) = 500 Hz (SMPLRT_DIV = 1) */
-	ret = mpu6050_write_reg(MPU6050_REG_SMPLRT_DIV, 0x01);
+	/* 5. Set Sample Rate: 1 kHz / (1 + SMPLRT_DIV) = 250 Hz (SMPLRT_DIV = 3) */
+	ret = mpu6050_write_reg(MPU6050_REG_SMPLRT_DIV, 0x03);
 	if (ret < 0) {
 		return ret;
 	}
@@ -117,7 +118,7 @@ int mpu6050_init(void)
 		return ret;
 	}
 
-	LOG_INF("MPU6050 configured successfully at 500 Hz DLPF 42 Hz.");
+	LOG_INF("MPU6050 configured successfully at 250 Hz (DLPF 42 Hz).");
 	return 0;
 }
 
@@ -208,11 +209,11 @@ int mpu6050_calibrate(mpu6050_calib_t *calib)
 	int64_t ax_sum = 0, ay_sum = 0, az_sum = 0;
 	int64_t gx_sum = 0, gy_sum = 0, gz_sum = 0;
 
-	/* Discard initial 100 samples to let filter settle */
-	for (int i = 0; i < 100; i++) {
+	/* Discard initial 50 samples to let filter settle */
+	for (int i = 0; i < 50; i++) {
 		mpu6050_raw_t dummy;
 		mpu6050_read_raw(&dummy);
-		k_msleep(2);
+		k_msleep(4);
 	}
 
 	int valid_samples = 0;
@@ -228,7 +229,7 @@ int mpu6050_calibrate(mpu6050_calib_t *calib)
 			gz_sum += raw.gyro_z;
 			valid_samples++;
 		}
-		k_usleep(2000); /* 500 Hz sample spacing */
+		k_usleep(4000); /* 250 Hz sample spacing */
 	}
 
 	if (valid_samples < (IMU_CALIB_SAMPLES * 8 / 10)) {
@@ -259,7 +260,8 @@ int mpu6050_calibrate(mpu6050_calib_t *calib)
 		*calib = s_calib;
 	}
 
-	LOG_INF("IMU Calibration complete: Gyro Bias=[%.1f, %.1f, %.1f], Accel Offset=[%.1f, %.1f, %.1f]",
+	LOG_INF("IMU Calibration complete (%d samples): Gyro Bias=[%.1f, %.1f, %.1f], Accel Offset=[%.1f, %.1f, %.1f]",
+		valid_samples,
 		s_calib.gyro_bias.x, s_calib.gyro_bias.y, s_calib.gyro_bias.z,
 		s_calib.accel_offset.x, s_calib.accel_offset.y, s_calib.accel_offset.z);
 

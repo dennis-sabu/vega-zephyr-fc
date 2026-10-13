@@ -1,7 +1,11 @@
 /*
- * ahrs.h - Attitude and Heading Reference System (Madgwick Filter)
+ * ahrs.h - Attitude and Heading Reference System
  * Target: C-DAC THEJAS32 SoC (VEGA ET1031 RISC-V @ 100 MHz)
  * Zephyr RTOS Application
+ *
+ * Implements:
+ * 1. Complementary Filter: theta = alpha*(theta + omega*dt) + (1 - alpha)*theta_acc
+ * 2. Madgwick gradient-descent quaternion fusion
  */
 
 #ifndef AHRS_H_
@@ -11,19 +15,21 @@
 #include "config.h"
 
 /**
- * @brief Initialize the AHRS filter with sample rate and divergence beta.
+ * @brief Initialize the AHRS filter with sample rate and complementary alpha.
  *
- * @param sample_freq Loop sampling frequency in Hz (e.g., 500.0f).
- * @param beta Filter gain determining rate of accelerometer convergence.
+ * @param sample_freq Loop sampling frequency in Hz (250.0f).
+ * @param alpha Complementary filter ratio (0.98f).
  */
-void ahrs_init(float sample_freq, float beta);
+void ahrs_init(float sample_freq, float alpha);
 
 /**
- * @brief Update orientation quaternion using latest gyro and accelerometer data.
+ * @brief Update attitude estimation using latest gyro and accelerometer data.
+ * Executes the discrete complementary filter equation:
+ * theta = alpha * (theta + omega * dt) + (1 - alpha) * theta_acc
  *
  * @param gyro Pointer to angular rates vector (rad/s in body frame).
  * @param accel Pointer to linear acceleration vector (m/s^2 in body frame).
- * @param dt Time step in seconds.
+ * @param dt Time step in seconds (0.004 s @ 250 Hz).
  */
 void ahrs_update(const vector3f_t *gyro, const vector3f_t *accel, float dt);
 
@@ -49,7 +55,14 @@ void ahrs_get_euler_angles(euler_angles_t *euler);
 void ahrs_get_euler_degrees(euler_angles_t *euler);
 
 /**
- * @brief Reset AHRS quaternion to identity [1, 0, 0, 0].
+ * @brief Get the latest angular rates in rad/s.
+ *
+ * @param rates Pointer to vector3f_t output structure.
+ */
+void ahrs_get_rates(vector3f_t *rates);
+
+/**
+ * @brief Reset AHRS orientation to level [0, 0, 0].
  */
 void ahrs_reset(void);
 

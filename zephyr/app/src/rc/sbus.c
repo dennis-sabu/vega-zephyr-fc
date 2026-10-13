@@ -5,10 +5,10 @@
  */
 
 #include "sbus.h"
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/ring_buffer.h>
-#include <zephyr/spinlock.h>
 #include <string.h>
 
 LOG_MODULE_REGISTER(sbus, CONFIG_LOG_DEFAULT_LEVEL);
@@ -27,8 +27,11 @@ RING_BUF_DECLARE(s_sbus_rb, SBUS_RING_BUF_SIZE);
 static uint8_t s_frame_buf[SBUS_FRAME_LEN];
 static uint32_t s_frame_idx = 0;
 static sbus_channels_t s_channels;
+static flight_setpoints_t s_setpoints;
 static bool s_has_valid_frame = false;
-static struct k_spinlock s_sbus_lock;
+
+/* Zephyr Mutex for thread-safe cross-thread shared flight setpoints */
+K_MUTEX_DEFINE(s_sbus_mutex);
 
 /* ISR callback for UART1 reception */
 static void sbus_uart_irq_callback(const struct device *dev, void *user_data)
@@ -53,7 +56,7 @@ int sbus_init(void)
 
 	LOG_INF("Configuring UART1 for SBUS (100000 baud, 8E2)...");
 
-	/* Configure UART line properties: 100000 baud, Even Parity, 2 Stop Bits */
+	/* Configure line properties: 100000 baud, Even Parity, 2 Stop Bits */
 	struct uart_config cfg = {
 		.baudrate = 100000,
 		.parity = UART_CFG_PARITY_EVEN,
@@ -64,10 +67,10 @@ int sbus_init(void)
 
 	int ret = uart_configure(uart_dev, &cfg);
 	if (ret < 0 && ret != -ENOSYS) {
-		LOG_WRN("uart_configure returned %d (relying on DT current-speed)", ret);
+		LOG_WRN("uart_configure returned %d (using DT defaults)", ret);
 	}
 
-	/* Initialize channels to safe defaults */
+	/* Initialize channels and setpoints to safe zero/neutral values */
 	memset(&s_channels, 0, sizeof(s_channels));
 	for (int i = 0; i < 16; i++) {
 		s_channels.raw_channels[i] = SBUS_INPUT_CENTER;
@@ -78,6 +81,10 @@ int sbus_init(void)
 	s_channels.mode_switch = MODE_ANGLE;
 	s_channels.frame_lost = true;
 	s_channels.failsafe_active = true;
+
+	memset(&s_setpoints, 0, sizeof(s_setpoints));
+	s_setpoints.flight_mode = MODE_ANGLE;
+	s_setpoints.signal_valid = false;
 
 	/* Setup interrupt callback and enable RX interrupt */
 	uart_irq_callback_user_data_set(uart_dev, sbus_uart_irq_callback, NULL);
@@ -106,20 +113,21 @@ static float sbus_scale_stick(uint16_t raw)
 
 static float sbus_scale_throttle(uint16_t raw)
 {
-	if (raw <= SBUS_INPUT_MIN) {
+	if (raw <= (SBUS_INPUT_MIN + SBUS_STICK_DEADBAND)) {
 		return 0.0f;
 	}
 	if (raw >= SBUS_INPUT_MAX) {
 		return 1.0f;
 	}
-	return (float)(raw - SBUS_INPUT_MIN) / (float)(SBUS_INPUT_MAX - SBUS_INPUT_MIN);
+	return (float)(raw - (SBUS_INPUT_MIN + SBUS_STICK_DEADBAND)) /
+	       (float)(SBUS_INPUT_MAX - SBUS_INPUT_MIN - SBUS_STICK_DEADBAND);
 }
 
 static void sbus_decode_packet(const uint8_t *b)
 {
 	uint16_t raw[16];
 
-	/* Decode 16 channels packed into 22 bytes (11 bits each) */
+	/* Decode 16 channels packed into 22 bytes (11 bits per channel) */
 	raw[0]  = (uint16_t)((b[1]       | (b[2]  << 8)) & 0x07FF);
 	raw[1]  = (uint16_t)(((b[2] >> 3)| (b[3]  << 5)) & 0x07FF);
 	raw[2]  = (uint16_t)(((b[3] >> 6)| (b[4]  << 2) | (b[5] << 10)) & 0x07FF);
@@ -140,28 +148,51 @@ static void sbus_decode_packet(const uint8_t *b)
 	uint8_t flags = b[23];
 	bool frame_lost = (flags & 0x04) != 0;
 	bool failsafe   = (flags & 0x08) != 0;
+	uint32_t now    = (uint32_t)k_uptime_get_32();
 
-	k_spinlock_key_t key = k_spin_lock(&s_sbus_lock);
-
-	for (int i = 0; i < 16; i++) {
-		s_channels.raw_channels[i] = raw[i];
+	/* Compute normalized values */
+	float roll_n     = sbus_scale_stick(raw[SBUS_CH_ROLL]);
+	float pitch_n    = sbus_scale_stick(raw[SBUS_CH_PITCH]);
+	float yaw_n      = sbus_scale_stick(raw[SBUS_CH_YAW]);
+	float throttle_n = sbus_scale_throttle(raw[SBUS_CH_THROTTLE]);
+	bool arm_sw      = (raw[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD);
+	flight_mode_t mode = MODE_RATE;
+	if (raw[SBUS_CH_MODE] > SBUS_MODE_ALT_HOLD_THRESH) {
+		mode = MODE_ALT_HOLD;
+	} else if (raw[SBUS_CH_MODE] > SBUS_MODE_ANGLE_MIN_THRESH) {
+		mode = MODE_ANGLE;
+	} else {
+		mode = MODE_RATE;
 	}
 
-	s_channels.roll_norm     = sbus_scale_stick(raw[SBUS_CH_ROLL]);
-	s_channels.pitch_norm    = sbus_scale_stick(raw[SBUS_CH_PITCH]);
-	s_channels.yaw_norm      = sbus_scale_stick(raw[SBUS_CH_YAW]);
-	s_channels.throttle_norm = sbus_scale_throttle(raw[SBUS_CH_THROTTLE]);
+	/* Lock mutex for thread-safe state update */
+	if (k_mutex_lock(&s_sbus_mutex, K_MSEC(5)) == 0) {
+		for (int i = 0; i < 16; i++) {
+			s_channels.raw_channels[i] = raw[i];
+		}
+		s_channels.roll_norm     = roll_n;
+		s_channels.pitch_norm    = pitch_n;
+		s_channels.yaw_norm      = yaw_n;
+		s_channels.throttle_norm = throttle_n;
+		s_channels.arm_switch    = arm_sw;
+		s_channels.mode_switch   = mode;
+		s_channels.frame_lost    = frame_lost;
+		s_channels.failsafe_active = failsafe;
+		s_channels.last_packet_time_ms = now;
 
-	s_channels.arm_switch  = (raw[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD);
-	s_channels.mode_switch = (raw[SBUS_CH_MODE] > SBUS_MODE_ANGLE_THRESHOLD) ?
-				 MODE_ANGLE : MODE_RATE;
+		/* Update normalized setpoints */
+		s_setpoints.target_roll_deg     = roll_n * MAX_ROLL_PITCH_ANGLE_DEG;   /* -30.0 to +30.0 deg */
+		s_setpoints.target_pitch_deg    = pitch_n * MAX_ROLL_PITCH_ANGLE_DEG;  /* -30.0 to +30.0 deg */
+		s_setpoints.target_yaw_rate_dps = yaw_n * MAX_YAW_RATE_DPS;            /* -180.0 to +180.0 dps */
+		s_setpoints.throttle            = throttle_n;                          /* 0.0 to 1.0 */
+		s_setpoints.arm_switch          = arm_sw;
+		s_setpoints.flight_mode         = mode;
+		s_setpoints.signal_valid        = (!frame_lost && !failsafe);
+		s_setpoints.timestamp_ms        = now;
 
-	s_channels.frame_lost = frame_lost;
-	s_channels.failsafe_active = failsafe;
-	s_channels.last_packet_time_ms = (uint32_t)k_uptime_get_32();
-	s_has_valid_frame = true;
-
-	k_spin_unlock(&s_sbus_lock, key);
+		s_has_valid_frame = true;
+		k_mutex_unlock(&s_sbus_mutex);
+	}
 }
 
 void sbus_process(void)
@@ -170,7 +201,6 @@ void sbus_process(void)
 
 	while (ring_buf_get(&s_sbus_rb, &byte, 1) > 0) {
 		if (s_frame_idx == 0) {
-			/* Hunt for header byte */
 			if (byte == SBUS_HEADER_BYTE) {
 				s_frame_buf[0] = byte;
 				s_frame_idx = 1;
@@ -181,7 +211,6 @@ void sbus_process(void)
 			if (s_frame_idx == SBUS_FRAME_LEN) {
 				uint8_t end_byte = s_frame_buf[SBUS_FRAME_LEN - 1];
 
-				/* Accept standard 0x00 end byte or Futaba S.BUS2 variations */
 				if (end_byte == SBUS_END_BYTE_STANDARD ||
 				    (end_byte & 0x0F) == SBUS_END_BYTE_FUTABA2) {
 					sbus_decode_packet(s_frame_buf);
@@ -189,7 +218,7 @@ void sbus_process(void)
 					LOG_DBG("SBUS frame framing error (end byte 0x%02X)", end_byte);
 				}
 
-				s_frame_idx = 0; /* Reset for next frame */
+				s_frame_idx = 0;
 			}
 		}
 	}
@@ -201,12 +230,30 @@ bool sbus_get_channels(sbus_channels_t *channels)
 		return false;
 	}
 
-	k_spinlock_key_t key = k_spin_lock(&s_sbus_lock);
-	*channels = s_channels;
-	bool valid = s_has_valid_frame;
-	k_spin_unlock(&s_sbus_lock, key);
+	if (k_mutex_lock(&s_sbus_mutex, K_MSEC(5)) == 0) {
+		*channels = s_channels;
+		bool valid = s_has_valid_frame;
+		k_mutex_unlock(&s_sbus_mutex);
+		return valid;
+	}
 
-	return valid;
+	return false;
+}
+
+bool sbus_get_setpoints(flight_setpoints_t *setpoints)
+{
+	if (setpoints == NULL) {
+		return false;
+	}
+
+	if (k_mutex_lock(&s_sbus_mutex, K_MSEC(5)) == 0) {
+		*setpoints = s_setpoints;
+		bool valid = s_has_valid_frame && s_setpoints.signal_valid;
+		k_mutex_unlock(&s_sbus_mutex);
+		return valid;
+	}
+
+	return false;
 }
 
 bool sbus_is_signal_loss(void)
@@ -217,18 +264,21 @@ bool sbus_is_signal_loss(void)
 
 	uint32_t now = (uint32_t)k_uptime_get_32();
 
-	k_spinlock_key_t key = k_spin_lock(&s_sbus_lock);
-	bool failsafe = s_channels.failsafe_active;
-	uint32_t last_time = s_channels.last_packet_time_ms;
-	k_spin_unlock(&s_sbus_lock, key);
+	if (k_mutex_lock(&s_sbus_mutex, K_MSEC(5)) == 0) {
+		bool failsafe = s_channels.failsafe_active;
+		uint32_t last_time = s_channels.last_packet_time_ms;
+		k_mutex_unlock(&s_sbus_mutex);
 
-	if (failsafe) {
-		return true;
+		if (failsafe) {
+			return true;
+		}
+
+		if ((now - last_time) > RC_TIMEOUT_MS) {
+			return true;
+		}
+
+		return false;
 	}
 
-	if ((now - last_time) > RC_TIMEOUT_MS) {
-		return true;
-	}
-
-	return false;
+	return true;
 }

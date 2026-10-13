@@ -7,8 +7,8 @@
 #ifndef MPU6050_H_
 #define MPU6050_H_
 
-#include <zephyr/kernel.h>
-#include <zephyr/drivers/i2c.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include "types.h"
 #include "config.h"
 
@@ -43,7 +43,7 @@
 
 /**
  * @brief Initialize the MPU6050 sensor on the THEJAS32 I2C0 bus.
- * Configures DLPF (42 Hz), Gyro (+/- 1000 dps), Accel (+/- 8g), and 500 Hz sample rate.
+ * Configures DLPF (42 Hz), Gyro (+/- 1000 dps), Accel (+/- 8g), and 250 Hz sample rate.
  *
  * @return 0 on success, negative error code on failure.
  */
@@ -66,7 +66,7 @@ int mpu6050_read_raw(mpu6050_raw_t *raw);
 int mpu6050_read(mpu6050_data_t *data);
 
 /**
- * @brief Perform static on-ground zero-bias calibration (1000 samples).
+ * @brief Perform static on-ground zero-bias calibration (500 samples).
  *
  * @param calib Pointer to calibration structure to store computed offsets.
  * @return 0 on success, negative error code on failure.

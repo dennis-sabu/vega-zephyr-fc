@@ -19,17 +19,28 @@ int sbus_init(void);
 
 /**
  * @brief Process bytes accumulated in ring buffer, parse frames, and update channels.
- * Called periodically from the RC task thread.
+ * Called periodically from the rc_receiver_thread (10 ms / 100 Hz).
  */
 void sbus_process(void);
 
 /**
- * @brief Retrieve the most recent decoded SBUS channels.
+ * @brief Retrieve raw and normalized SBUS channel data.
  *
  * @param channels Pointer to output sbus_channels_t structure.
- * @return true if valid frame has been decoded, false otherwise.
+ * @return true if valid frame has been received, false otherwise.
  */
 bool sbus_get_channels(sbus_channels_t *channels);
+
+/**
+ * @brief Thread-safe retrieval of normalized flight setpoints using Zephyr mutex.
+ * - Throttle: 0.0 to 1.0
+ * - Roll / Pitch: -30.0 deg to +30.0 deg (Angle mode)
+ * - Yaw Rate: -180.0 deg/s to +180.0 deg/s
+ *
+ * @param setpoints Pointer to output flight_setpoints_t structure.
+ * @return true if setpoints are valid and RC link is alive; false otherwise.
+ */
+bool sbus_get_setpoints(flight_setpoints_t *setpoints);
 
 /**
  * @brief Check if RC signal has been lost (timeout > 500 ms or failsafe flag).
