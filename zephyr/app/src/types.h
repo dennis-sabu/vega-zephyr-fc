@@ -10,6 +10,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/time_units.h>
+
+static inline int64_t k_uptime_get_us(void)
+{
+	return k_ticks_to_us_floor64(k_uptime_ticks());
+}
 
 /* -------------------------------------------------------------------------- */
 /* Mathematical Vector and Attitude Representations                           */

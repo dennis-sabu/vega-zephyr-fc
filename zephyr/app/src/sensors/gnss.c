@@ -45,11 +45,14 @@ static void gnss_uart_irq_callback(const struct device *dev, void *user_data)
 {
 	ARG_UNUSED(user_data);
 
-	while (uart_irq_update(dev) && uart_irq_rx_ready(dev)) {
+	uart_irq_update(dev);
+	while (uart_irq_rx_ready(dev)) {
 		uint8_t rx_byte;
 		int read = uart_fifo_read(dev, &rx_byte, 1);
 		if (read > 0) {
 			ring_buf_put(&s_gnss_rb, &rx_byte, 1);
+		} else {
+			break;
 		}
 	}
 }

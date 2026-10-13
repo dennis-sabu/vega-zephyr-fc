@@ -14,7 +14,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/fs/fs.h>
-#include <zephyr/ff.h>
+#include <ff.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <stdio.h>
 #include <string.h>

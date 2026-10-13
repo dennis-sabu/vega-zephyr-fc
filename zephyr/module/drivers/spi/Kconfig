@@ -1,0 +1,22 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+
+config SPI_THEJAS32
+	bool "C-DAC THEJAS32 SPI driver"
+	default y
+	depends on DT_HAS_CDAC_THEJAS32_SPI_ENABLED
+	select SPI
+	help
+	  Out-of-tree polling-mode SPI driver for the C-DAC THEJAS32 SoC
+	  (ARIES v3.0 board). Not part of upstream Zephyr. 8-bit words only
+	  (the hardware's Dbits field is wider, but this driver only
+	  implements the 8-bit case the native SDK itself defaults to and
+	  that this project could cross-verify against two sources).
+
+config SPI_THEJAS32_TIMEOUT_US
+	int "Bus-wait timeout in microseconds"
+	default 10000
+	depends on SPI_THEJAS32
+	help
+	  Upper bound on the busy/TX-empty/RX-complete spin-waits in this
+	  driver. The native SDK's own spi.c uses unbounded while() loops
+	  for the same waits.

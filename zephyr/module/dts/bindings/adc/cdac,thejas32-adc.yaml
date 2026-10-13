@@ -1,0 +1,38 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+#
+# This is the one peripheral where the Arduino core (vega-bsp) itself had
+# NO usable source: no wiring_analog.c exists in that repository and
+# libraries/ADC/ADC.h is an empty stub (see this project's own
+# docs/HARDWARE_VERIFICATION.md §7 from the earlier Arduino-based work).
+# Everything here instead comes from the native VEGA SDK's
+# bsp/include/adc.h / bsp/drivers/adc/adc.c (cdac-vega.gitlab.io/vega-sdk),
+# which is a single source, not cross-checked against a second one the
+# way I2C/SPI/PWM were. Treat the register map below as verified-from-one-
+# source, not double-confirmed.
+#
+# ADC_BASE_ADDRESS = 0x10001000, a 3-register block (address_reg,
+# status_reg, data_reg, each 4 bytes). Only 4 channels exist
+# (adc_analogRead() accepts 0-3, selecting them with address_reg values
+# 0x14-0x17) -- NOT 8, despite vega-bsp's pins_arduino.h defining A0..A7.
+# ADC resolution and reference voltage are not stated in either source
+# and remain unverified.
+
+description: |
+  C-DAC THEJAS32 ADC controller. 4 channels (confirmed from the native
+  SDK driver, not 8 as an Arduino-side pin macro alone would suggest).
+  Bit depth and reference voltage are not documented in any source this
+  project could read.
+
+compatible: "cdac,thejas32-adc"
+
+include: [adc-controller.yaml, base.yaml]
+
+properties:
+  reg:
+    required: true
+
+  "#io-channel-cells":
+    const: 1
+
+io-channel-cells:
+  - input

@@ -1,0 +1,27 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+
+config ADC_THEJAS32
+	bool "C-DAC THEJAS32 ADC driver"
+	default y
+	depends on DT_HAS_CDAC_THEJAS32_ADC_ENABLED
+	select ADC
+	help
+	  Out-of-tree ADC driver for the C-DAC THEJAS32 SoC's 4-channel ADC
+	  block (ARIES v3.0 board). Not part of upstream Zephyr.
+
+	  Verified from only ONE source (the native VEGA SDK's
+	  bsp/drivers/adc/adc.c) rather than two independently-agreeing
+	  sources like the I2C/SPI/PWM drivers in this same module -- the
+	  Arduino core has no usable ADC source to cross-check against.
+	  Resolution and reference voltage are not documented anywhere this
+	  project could read; this driver returns the raw register value
+	  masked to the requested sequence->resolution bit width without
+	  claiming that width is the hardware's actual native resolution.
+
+config ADC_THEJAS32_TIMEOUT_US
+	int "Conversion-wait timeout in microseconds"
+	default 10000
+	depends on ADC_THEJAS32
+	help
+	  Upper bound on the conversion-ready spin-wait. The native SDK's
+	  own adc.c uses an unbounded while() loop for the same wait.

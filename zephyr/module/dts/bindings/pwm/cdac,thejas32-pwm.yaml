@@ -1,0 +1,25 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+#
+# Register layout verified identically from two independent sources:
+#   - vega-bsp cores/arduino/pwm.h's PWMC_N_CR/_SR/_PR/_ON_OFF offsets and
+#     PWMC_CR_MODE/AC/IE/OPC/RC bit-shift macros.
+#   - native VEGA SDK bsp/include/pwmc.h's PWMCregType struct (Control
+#     union with the SAME bitfield widths: Mode:2 AC:2 IE:1 OPC:1
+#     RepeatCount:16) and PWMC_BASE_ADDR/PWMCreg(n) macros
+#     (cdac-vega.gitlab.io/vega-sdk).
+# Base address: PWMC_BASE_ADDR=0x10400000, channel stride 0x10, global
+# control register at +0x80 -- this driver's "pwm-controller" node covers
+# all 8 channels of ONE THEJAS32 PWM block; there is only one block.
+
+description: |
+  C-DAC THEJAS32 PWM controller. A single block of 8 independent
+  channels (PWM0..PWM7), each with its own period/duty register pair,
+  plus one shared global enable register for the whole block.
+
+compatible: "cdac,thejas32-pwm"
+
+include: [pwm-controller.yaml, base.yaml]
+
+properties:
+  reg:
+    required: true

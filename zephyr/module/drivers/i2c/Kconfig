@@ -1,0 +1,32 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+
+config I2C_THEJAS32
+	bool "C-DAC THEJAS32 I2C driver"
+	default y
+	depends on DT_HAS_CDAC_THEJAS32_I2C_ENABLED
+	select I2C
+	help
+	  Out-of-tree polling-mode I2C driver for the C-DAC THEJAS32 SoC
+	  (ARIES v3.0 board). Not part of upstream Zephyr -- see
+	  zephyr/module/CMakeLists.txt in this repository for why, and for
+	  the two independent sources every register/bit value here is
+	  checked against.
+
+	  Hardware read transactions are capped at 16 bytes; a larger
+	  i2c_msg read request is rejected with -EINVAL rather than split
+	  transparently, since this project did not verify that splitting a
+	  single logical read into two hardware transactions (each with its
+	  own START/address/STOP) is safe for an arbitrary target device's
+	  register-read semantics.
+
+config I2C_THEJAS32_TIMEOUT_US
+	int "Bus-wait timeout in microseconds"
+	default 10000
+	depends on I2C_THEJAS32
+	help
+	  Upper bound on every register-status spin-wait in this driver
+	  (start/stop acknowledgement, TX FIFO state, RX ready). The native
+	  SDK driver this is modeled on uses unbounded while() loops for the
+	  same waits, which can hang forever on a stuck bus (e.g. SDA held
+	  low, missing pull-ups) -- this Kconfig option is what lets this
+	  driver return -ETIMEDOUT instead.

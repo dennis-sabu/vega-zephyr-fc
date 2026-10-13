@@ -4,6 +4,8 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
+list(APPEND ZEPHYR_EXTRA_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../module)
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(aries_v3_flight_controller LANGUAGES C)
 
@@ -35,3 +37,4 @@ target_sources(app PRIVATE
     src/system/telemetry.c
     src/system/logger.c
 )
+target_link_libraries(app PRIVATE m)

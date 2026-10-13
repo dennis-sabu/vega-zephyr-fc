@@ -6,12 +6,14 @@
  * - UART0 @ 0x10000100 : GNSS NMEA Receiver (@ 9600 baud, 8N1)
  * - UART1 @ 0x10000200 : RC Receiver (SBUS @ 100,000 baud, 8E2)
  * - UART2 @ 0x10000300 : Telemetry / Debug Link (@ 115,200 baud, 8N1)
- * - GPIO1 @ 0x10000400 : General Purpose I/O (Pin 10 -> SD Card CS)
+ * - GPIO1 @ 0x10180000 : General Purpose I/O (Pin 10 -> SD Card CS)
  * - SPI0  @ 0x10000600 : MicroSD Card Slot (SDHC-SPI Mode @ 25 MHz)
  * - I2C0  @ 0x10000800 : Shared Sensor Bus (MPU6050 @ 0x68, BMP280 @ 0x76, MAG @ 0x0D/0x1E)
  * - ADC0  @ 0x10001000 : Battery Voltage Monitor (Channel 0, scaled divider)
  * - PWM0  @ 0x10400000 : 8-Channel Timer PWM (Channels 0-3 for Quad-X ESCs @ 400 Hz)
  */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
 
 / {
 	chosen {
@@ -26,9 +28,6 @@
 		imu-i2c = &i2c0;
 		baro-i2c = &i2c0;
 		mag-i2c = &i2c0;
-		mpu6050 = &mpu6050_node;
-		bmp280 = &bmp280_node;
-		mag = &mag_node;
 		motor-pwm = &pwm0;
 		battery-adc = &adc0;
 		spi0 = &spi0;
@@ -36,56 +35,9 @@
 	};
 
 	soc {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		compatible = "simple-bus";
-		ranges;
-
-		/* UART0: Dedicated to GNSS NMEA receiver @ 9600 baud */
-		uart0: uart@10000100 {
-			compatible = "cdac,thejas32-uart", "ns16550";
-			reg = <0x10000100 0x100>;
-			clock-frequency = <100000000>;
-			current-speed = <9600>;
-			interrupts = <2 1>;
-			status = "okay";
-		};
-
-		/* UART1: Dedicated to SBUS RC Receiver input @ 100,000 baud */
-		uart1: uart@10000200 {
-			compatible = "cdac,thejas32-uart", "ns16550";
-			reg = <0x10000200 0x100>;
-			clock-frequency = <100000000>;
-			current-speed = <100000>;
-			interrupts = <3 1>;
-			status = "okay";
-		};
-
-		/* UART2: Dedicated to Telemetry stream @ 115,200 baud */
-		uart2: uart@10000300 {
-			compatible = "cdac,thejas32-uart", "ns16550";
-			reg = <0x10000300 0x100>;
-			clock-frequency = <100000000>;
-			current-speed = <115200>;
-			interrupts = <4 1>;
-			status = "okay";
-		};
-
-		/* GPIO1 Controller: Pin 10 assigned to SD Card SPI Chip-Select */
-		gpio1: gpio@10000400 {
-			compatible = "cdac,thejas32-gpio";
-			reg = <0x10000400 0x40>;
-			gpio-controller;
-			#gpio-cells = <2>;
-			status = "okay";
-		};
-
-		/* SPI0: Dedicated to MicroSD Card via SDHC-SPI slot @ 25 MHz */
 		spi0: spi@10000600 {
 			compatible = "cdac,thejas32-spi";
-			reg = <0x10000600 0x100>;
-			clock-frequency = <100000000>;
-			interrupts = <6 1>;
+			reg = <0x10000600 0x14>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
@@ -104,51 +56,42 @@
 			};
 		};
 
-		/* I2C0: Shared sensor bus (MPU6050, BMP280, QMC5883L/HMC5883L) @ 400 kHz */
 		i2c0: i2c@10000800 {
 			compatible = "cdac,thejas32-i2c";
-			reg = <0x10000800 0x100>;
-			clock-frequency = <400000>;
-			interrupts = <8 1>;
+			reg = <0x10000800 0x0b>;
 			#address-cells = <1>;
 			#size-cells = <0>;
+			clock-frequency = <400000>;
 			status = "okay";
-
-			mpu6050_node: mpu6050@68 {
-				compatible = "invensense,mpu6050";
-				reg = <0x68>;
-				status = "okay";
-			};
-
-			bmp280_node: bmp280@76 {
-				compatible = "bosch,bmp280";
-				reg = <0x76>;
-				status = "okay";
-			};
-
-			mag_node: mag@0d {
-				compatible = "qmc5883l";
-				reg = <0x0d>;
-				status = "okay";
-			};
 		};
 
-		/* ADC0: Scaled battery voltage monitor on Channel 0 */
 		adc0: adc@10001000 {
 			compatible = "cdac,thejas32-adc";
-			reg = <0x10001000 0x100>;
-			interrupts = <10 1>;
+			reg = <0x10001000 0x0c>;
 			#io-channel-cells = <1>;
 			status = "okay";
 		};
 
-		/* PWM0: 8-Channel ESC output @ 400 Hz (100 MHz Base Clock) */
 		pwm0: pwm@10400000 {
 			compatible = "cdac,thejas32-pwm";
-			reg = <0x10400000 0x100>;
-			clock-frequency = <100000000>;
+			reg = <0x10400000 0x90>;
 			#pwm-cells = <3>;
 			status = "okay";
 		};
 	};
+};
+
+&uart0 {
+	status = "okay";
+	current-speed = <9600>;
+};
+
+&uart1 {
+	status = "okay";
+	current-speed = <100000>;
+};
+
+&uart2 {
+	status = "okay";
+	current-speed = <115200>;
 };

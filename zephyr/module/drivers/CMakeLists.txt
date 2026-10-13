@@ -1,0 +1,4 @@
+add_subdirectory_ifdef(CONFIG_I2C_THEJAS32 i2c)
+add_subdirectory_ifdef(CONFIG_SPI_THEJAS32 spi)
+add_subdirectory_ifdef(CONFIG_PWM_THEJAS32 pwm)
+add_subdirectory_ifdef(CONFIG_ADC_THEJAS32 adc)

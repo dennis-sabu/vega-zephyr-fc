@@ -1,0 +1,23 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+#
+# Register layout verified identically from two independent sources:
+#   - vega-bsp libraries/SPI/src/SPI.h's SPIM_CR_*/SPIM_SR_*/SPIM_BRR/
+#     SPIM_TDR/SPIM_RDR macros.
+#   - native VEGA SDK bsp/include/spi.h's SPIregType struct and spi.c's
+#     SPI_init()/SPI_transmit()/SPI_receive() (cdac-vega.gitlab.io/vega-sdk).
+# Base addresses: SPI0/1 at 0x10000600/0x10000700, SPI2/3 at
+# 0x10200100/0x10200200 (both sources agree, once the native SDK's
+# two-level SPI_BASE_ADDR(i) + 0x100*(i%2) macro is expanded).
+
+description: |
+  C-DAC THEJAS32 SPI controller. One of 4 independent controllers on this
+  SoC (SPI0..SPI3); each instance in the devicetree is a separate node at
+  its own base address, not a single controller with a channel selector.
+
+compatible: "cdac,thejas32-spi"
+
+include: [spi-controller.yaml, base.yaml]
+
+properties:
+  reg:
+    required: true

@@ -1,0 +1,4 @@
+rsource "i2c/Kconfig"
+rsource "spi/Kconfig"
+rsource "pwm/Kconfig"
+rsource "adc/Kconfig"

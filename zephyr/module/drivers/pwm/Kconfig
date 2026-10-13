@@ -1,0 +1,18 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt.
+
+config PWM_THEJAS32
+	bool "C-DAC THEJAS32 PWM driver"
+	default y
+	depends on DT_HAS_CDAC_THEJAS32_PWM_ENABLED
+	select PWM
+	help
+	  Out-of-tree PWM driver for the C-DAC THEJAS32 SoC's 8-channel PWM
+	  block (ARIES v3.0 board). Not part of upstream Zephyr.
+
+	  The hardware's period/duty registers are raw timer counts, not a
+	  frequency+duty-cycle pair -- this driver converts Zephyr's
+	  pwm_set_cycles() nanosecond-based period/pulse into those counts
+	  using the CPU clock-frequency devicetree property, since no
+	  separate PWM clock divider was found documented for this block in
+	  either source this project could read (see the driver's top
+	  comment for exactly what WAS cross-verified).

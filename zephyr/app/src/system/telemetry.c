@@ -58,8 +58,8 @@ static telemetry_state_cache_t s_cache;
 static struct k_spinlock s_cache_lock;
 static bool s_is_initialized = false;
 
-/* Static Thread Memory */
-K_THREAD_STACK_DEFINE(s_telemetry_stack, TELEMETRY_THREAD_STACK_SIZE);
+/* Thread Memory (defined in main.c) */
+K_THREAD_STACK_DECLARE(s_telemetry_stack, TELEMETRY_THREAD_STACK_SIZE);
 static struct k_thread s_telemetry_thread_data;
 
 int telemetry_init(void)

@@ -1,0 +1,26 @@
+# Not part of upstream Zephyr. See zephyr/module/CMakeLists.txt for why.
+#
+# Register base addresses and spacing verified from two independent
+# sources that agree exactly:
+#   - vega-bsp thejas32/include/platform.h: IIC0_BASE_ADDR=0x10000800,
+#     IIC1_BASE_ADDR=0x10000900 (stride 0x100).
+#   - native VEGA SDK bsp/include/config.h: I2C_BASE_ADDR=0x10000800,
+#     and bsp/include/i2c.h's I2CReg(i) macro: I2C_BASE_ADDR + 0x100*i.
+
+description: |
+  C-DAC THEJAS32 I2C controller.
+
+  An 11-byte register block (I2C_CR, I2C_SR0, I2C_SR1, I2C_IER, I2C_TxFF,
+  I2C_RxFF, I2C_CHL, I2C_CHH, I2C_CHHL, I2C_CHHH, I2C_TXCLR), each one
+  byte wide, with no FIFO beyond single-byte Tx/Rx staging registers.
+  Hardware read transactions are limited to 16 bytes (confirmed directly
+  from the native SDK's own i2c_data_read()/i2c_start() bounds check,
+  "max read length supported is 16").
+
+compatible: "cdac,thejas32-i2c"
+
+include: [i2c-controller.yaml, base.yaml]
+
+properties:
+  reg:
+    required: true
