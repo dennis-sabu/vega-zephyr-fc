@@ -1,0 +1,13 @@
+# Build directories
+build/
+*.o
+*.bin
+*.elf
+*.hex
+*.map
+
+# Editor and temporary files
+.vscode/
+.idea/
+*.swp
+*~

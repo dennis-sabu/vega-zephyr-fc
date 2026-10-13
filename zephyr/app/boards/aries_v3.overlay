@@ -1,0 +1,89 @@
+/*
+ * aries_v3.overlay - DeviceTree Overlay for VEGA ARIES v3.0 Flight Controller
+ * Target: C-DAC THEJAS32 SoC / VEGA ET1031 RISC-V @ 100 MHz
+ *
+ * Peripheral Mapping:
+ * - I2C0  @ 0x10000800 : MPU6050 6-DOF IMU (Addr 0x68, max burst 16 bytes)
+ * - PWM0  @ 0x10400000 : 8-Channel Timer PWM (Channels 0-3 for Quad-X ESCs @ 400 Hz)
+ * - ADC0  @ 0x10001000 : Battery Voltage Monitor (Channel 0, scaled divider)
+ * - UART1 @ 0x10000200 : RC Receiver (SBUS @ 100,000 baud, 8E2)
+ * - UART2 @ 0x10000300 : Telemetry / Debug Link (@ 115,200 baud)
+ */
+
+/ {
+	chosen {
+		zephyr,console = &uart2;
+		zephyr,shell-uart = &uart2;
+	};
+
+	aliases {
+		imu-i2c = &i2c0;
+		mpu6050 = &mpu6050_node;
+		motor-pwm = &pwm0;
+		battery-adc = &adc0;
+		sbus-uart = &uart1;
+		telemetry-uart = &uart2;
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		/* UART1: Dedicated to SBUS RC Receiver input @ 100,000 baud */
+		uart1: uart@10000200 {
+			compatible = "cdac,thejas32-uart", "ns16550";
+			reg = <0x10000200 0x100>;
+			clock-frequency = <100000000>;
+			current-speed = <100000>;
+			interrupts = <3 1>;
+			status = "okay";
+		};
+
+		/* UART2: Dedicated to Telemetry stream @ 115,200 baud */
+		uart2: uart@10000300 {
+			compatible = "cdac,thejas32-uart", "ns16550";
+			reg = <0x10000300 0x100>;
+			clock-frequency = <100000000>;
+			current-speed = <115200>;
+			interrupts = <4 1>;
+			status = "okay";
+		};
+
+		/* I2C0: Connected to MPU6050 IMU @ 400 kHz Fast-Mode */
+		i2c0: i2c@10000800 {
+			compatible = "cdac,thejas32-i2c";
+			reg = <0x10000800 0x100>;
+			clock-frequency = <400000>;
+			interrupts = <8 1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			mpu6050_node: mpu6050@68 {
+				compatible = "invensense,mpu6050";
+				reg = <0x68>;
+				status = "okay";
+			};
+		};
+
+		/* ADC0: Scaled battery voltage monitor on Channel 0 */
+		adc0: adc@10001000 {
+			compatible = "cdac,thejas32-adc";
+			reg = <0x10001000 0x100>;
+			interrupts = <10 1>;
+			#io-channel-cells = <1>;
+			status = "okay";
+		};
+
+		/* PWM0: 8-Channel ESC output @ 400 Hz (100 MHz Base Clock) */
+		pwm0: pwm@10400000 {
+			compatible = "cdac,thejas32-pwm";
+			reg = <0x10400000 0x100>;
+			clock-frequency = <100000000>;
+			#pwm-cells = <3>;
+			status = "okay";
+		};
+	};
+};
